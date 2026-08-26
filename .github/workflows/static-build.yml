@@ -1,0 +1,33 @@
+name: Build CPython 3.8.20 static x64
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - build-static.ps1
+      - .github/workflows/static-build.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout build scripts
+        uses: actions/checkout@v4
+
+      - name: Build and verify static CPython
+        shell: powershell
+        run: .\build-static.ps1
+
+      - name: Upload verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-3.8.20-static-win64
+          path: python-3.8.20-static-win64.zip
+          if-no-files-found: error
+          retention-days: 7
+
