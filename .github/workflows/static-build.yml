@@ -1,4 +1,4 @@
-name: Build CPython 3.8.20 static x64
+name: Build CPython 3.7.17 static x64
 
 on:
   workflow_dispatch:
@@ -26,8 +26,8 @@ jobs:
       - name: Upload verified package
         uses: actions/upload-artifact@v4
         with:
-          name: python-3.8.20-static-win64
-          path: python-3.8.20-static-win64.zip
+          name: python-3.7.17-static-win64
+          path: python-3.7.17-static-win64.zip
           if-no-files-found: error
           retention-days: 7
 

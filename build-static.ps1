@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $sourceDir = Join-Path $PSScriptRoot 'cpython'
-$distDir = Join-Path $PSScriptRoot 'python-3.8.20-static-win64'
+$distDir = Join-Path $PSScriptRoot 'python-3.7.17-static-win64'
 
 function Replace-Required {
     param(
@@ -19,8 +19,8 @@ function Replace-Required {
     [System.IO.File]::WriteAllText($Path, $content, [System.Text.UTF8Encoding]::new($true))
 }
 
-git clone --depth 1 --branch v3.8.20 https://github.com/python/cpython.git $sourceDir
-if ($LASTEXITCODE -ne 0) { throw 'Failed to clone CPython v3.8.20.' }
+git clone --depth 1 --branch v3.7.17 https://github.com/python/cpython.git $sourceDir
+if ($LASTEXITCODE -ne 0) { throw 'Failed to clone CPython v3.7.17.' }
 
 $pythonCoreProject = Join-Path $sourceDir 'PCbuild\pythoncore.vcxproj'
 $pythonProject = Join-Path $sourceDir 'PCbuild\python.vcxproj'
@@ -30,8 +30,8 @@ Replace-Required $pythonCoreProject `
     '<ConfigurationType>StaticLibrary</ConfigurationType>'
 
 Replace-Required $pythonCoreProject `
-    '_USRDLL;Py_BUILD_CORE;Py_BUILD_CORE_BUILTIN;Py_ENABLE_SHARED;' `
-    '_LIB;Py_BUILD_CORE;Py_BUILD_CORE_BUILTIN;Py_NO_ENABLE_SHARED;'
+    '_USRDLL;Py_BUILD_CORE;Py_ENABLE_SHARED;' `
+    '_LIB;Py_BUILD_CORE;Py_NO_ENABLE_SHARED;'
 
 Replace-Required $pythonCoreProject `
     "    <ClCompile>`r`n      <AdditionalOptions>" `
@@ -76,11 +76,11 @@ finally {
 
 $outputDir = Join-Path $sourceDir 'PCbuild\amd64'
 $pythonExe = Join-Path $outputDir 'python.exe'
-$pythonLib = Join-Path $outputDir 'python38.lib'
+$pythonLib = Join-Path $outputDir 'python37.lib'
 
 if (-not (Test-Path $pythonExe)) { throw 'python.exe was not produced.' }
-if (-not (Test-Path $pythonLib)) { throw 'python38.lib was not produced.' }
-if (Test-Path (Join-Path $outputDir 'python38.dll')) { throw 'Unexpected python38.dll was produced.' }
+if (-not (Test-Path $pythonLib)) { throw 'python37.lib was not produced.' }
+if (Test-Path (Join-Path $outputDir 'python37.dll')) { throw 'Unexpected python37.dll was produced.' }
 
 $dumpbin = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
     -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' |
@@ -89,14 +89,14 @@ if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
 
 $dependencies = (& $dumpbin /nologo /dependents $pythonExe | Out-String)
 if ($LASTEXITCODE -ne 0) { throw 'dumpbin dependency inspection failed.' }
-if ($dependencies -match '(?i)python38\.dll') {
-    throw 'python.exe still depends on python38.dll.'
+if ($dependencies -match '(?i)python37\.dll') {
+    throw 'python.exe still depends on python37.dll.'
 }
 
 $libraryMembers = (& $dumpbin /nologo /linkermember:2 $pythonLib | Out-String)
 if ($LASTEXITCODE -ne 0) { throw 'dumpbin static-library inspection failed.' }
 if ($libraryMembers -notmatch 'Py_Initialize') {
-    throw 'python38.lib does not contain the expected CPython symbols.'
+    throw 'python37.lib does not contain the expected CPython symbols.'
 }
 
 New-Item -ItemType Directory -Force $distDir | Out-Null
@@ -116,7 +116,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Packaged python.exe smoke test failed.' }
 
 $commit = (git -C $sourceDir rev-parse HEAD).Trim()
 $buildInfo = @"
-Python version: 3.8.20
+Python version: 3.7.17
 Architecture: x64
 Configuration: Release
 Compiler toolset: MSVC v142
@@ -142,7 +142,7 @@ if ($unexpectedDynamicFiles) {
     throw "Unexpected dynamic files in package: $($unexpectedDynamicFiles.FullName -join ', ')"
 }
 
-$archive = Join-Path $PSScriptRoot 'python-3.8.20-static-win64.zip'
+$archive = Join-Path $PSScriptRoot 'python-3.7.17-static-win64.zip'
 Compress-Archive -Path $distDir -DestinationPath $archive -CompressionLevel Optimal -Force
 Get-FileHash $archive -Algorithm SHA256 | Format-List
 
