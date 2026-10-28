@@ -1,4 +1,4 @@
-name: Build Orca v1.4.242 portable Windows x64
+name: Build Orca v1.4.242 full portable folder Windows x64
 
 on:
   push:
@@ -15,6 +15,7 @@ env:
   ORCA_BACKGROUND_LAUNCH: '1'
   NODE_OPTIONS: --max-old-space-size=4096
   CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  ORCA_REQUIRE_ORCAD_TEMPLATE: '1'
 
 jobs:
   build:
@@ -28,6 +29,59 @@ jobs:
           repository: stablyai/orca
           ref: v1.4.242
           persist-credentials: false
+
+      - name: Import official remote-host server template
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'orca-windows-setup-1.4.242.exe'
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'orca-official-setup'
+          $nestedRoot = Join-Path $env:RUNNER_TEMP 'orca-official-app'
+          $url = 'https://github.com/stablyai/orca/releases/download/v1.4.242/orca-windows-setup.exe'
+          $expected = '9d3e8639caacb61c3af2510a39069016e1a744d7425a146186a050e5978224ef'
+
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Official setup checksum mismatch: expected $expected, got $actual"
+          }
+
+          New-Item -ItemType Directory -Path $extractRoot, $nestedRoot -Force | Out-Null
+          & 7z x $installer "-o$extractRoot" -y
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract official setup."
+          }
+
+          $template = Get-ChildItem -LiteralPath $extractRoot -Recurse -Directory -Filter 'orcad-template' |
+            Where-Object { $_.Parent.Name -eq 'resources' } |
+            Select-Object -First 1
+
+          if (-not $template) {
+            $archives = Get-ChildItem -LiteralPath $extractRoot -Recurse -File -Filter '*.7z'
+            foreach ($archive in $archives) {
+              & 7z x $archive.FullName "-o$nestedRoot" -y
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to extract nested application archive $($archive.FullName)."
+              }
+            }
+            $template = Get-ChildItem -LiteralPath $nestedRoot -Recurse -Directory -Filter 'orcad-template' |
+              Where-Object { $_.Parent.Name -eq 'resources' } |
+              Select-Object -First 1
+          }
+
+          if (-not $template) {
+            throw "Official setup did not contain resources/orcad-template."
+          }
+
+          New-Item -ItemType Directory -Path 'out\orcad-template' -Force | Out-Null
+          Copy-Item -LiteralPath (Join-Path $template.FullName '*') -Destination 'out\orcad-template' -Recurse -Force
+
+          $targets = Get-ChildItem -LiteralPath 'out\orcad-template\targets' -Directory
+          if ($targets.Count -lt 6) {
+            throw "Remote-host template is incomplete: found only $($targets.Count) target slots."
+          }
+          Write-Host "Imported official Orcad template with $($targets.Count) target slots:"
+          $targets.Name | Sort-Object
 
       - name: Setup pnpm
         uses: pnpm/setup@v2
@@ -50,8 +104,9 @@ jobs:
           path: |
             ~\AppData\Local\electron\Cache
             ~\AppData\Local\electron-builder\Cache
-          key: electron-builder-orca-1.4.242-win-x64-${{ hashFiles('pnpm-lock.yaml') }}
+          key: electron-builder-orca-1.4.242-win-x64-full-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
+            electron-builder-orca-1.4.242-win-x64-full-
             electron-builder-orca-1.4.242-win-x64-
             electron-builder-orca-
 
@@ -83,66 +138,78 @@ jobs:
             throw "pnpm build:release failed with exit code $LASTEXITCODE"
           }
 
-      - name: Package portable Windows x64
+      - name: Package and verify full unpacked folder
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           node config/scripts/ensure-native-runtime.mjs --runtime=electron
           if ($LASTEXITCODE -ne 0) {
             throw "ensure-native-runtime failed with exit code $LASTEXITCODE"
           }
 
-          pnpm exec electron-builder --config config/electron-builder.config.cjs --win portable --x64 --publish never
+          pnpm exec electron-builder --config config/electron-builder.config.cjs --win --x64 --dir --publish never
           if ($LASTEXITCODE -ne 0) {
             throw "electron-builder failed with exit code $LASTEXITCODE"
           }
 
-          $portable = Get-ChildItem -Path dist -File -Filter *.exe |
-            Where-Object { $_.Name -notmatch '(?i)setup' } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $portable) {
-            throw "Portable executable was not produced."
-          }
-
-          $portableOutput = Join-Path $PWD 'dist\orca-1.4.242-windows-portable.exe'
-          if ($portable.FullName -ne $portableOutput) {
-            Copy-Item -LiteralPath $portable.FullName -Destination $portableOutput -Force
-          }
-
-          $unpackedExe = Join-Path $PWD 'dist\win-unpacked\Orca.exe'
+          $unpacked = Join-Path $PWD 'dist\win-unpacked'
+          $unpackedExe = Join-Path $unpacked 'Orca.exe'
+          $resources = Join-Path $unpacked 'resources'
+          $template = Join-Path $resources 'orcad-template'
           if (-not (Test-Path -LiteralPath $unpackedExe -PathType Leaf)) {
             throw "dist\win-unpacked\Orca.exe was not produced."
           }
+          if (-not (Test-Path -LiteralPath $template -PathType Container)) {
+            throw "Packaged app is missing resources\orcad-template."
+          }
 
-          $unpackedZip = Join-Path $PWD 'dist\orca-1.4.242-windows-unpacked.zip'
-          Compress-Archive -Path 'dist\win-unpacked\*' -DestinationPath $unpackedZip -CompressionLevel Optimal -Force
+          node -e "require('./config/scripts/verify-packaged-orcad-template.cjs').verifyPackagedOrcadTemplate('dist/win-unpacked/resources')"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged Orcad server template verification failed."
+          }
+
+          $conpty = Get-ChildItem -LiteralPath $unpacked -Recurse -File |
+            Where-Object { $_.Name -match '^(conpty|winpty)' }
+          if (-not $conpty) {
+            throw "Packaged app is missing Windows PTY runtime files."
+          }
+
+          $targets = Get-ChildItem -LiteralPath (Join-Path $template 'targets') -Directory |
+            Sort-Object Name
+          Write-Host "Verified packaged remote-host targets:"
+          $targets.Name
+
+          $zip = Join-Path $PWD 'dist\orca-1.4.242-windows-x64-unpacked-full.zip'
+          Compress-Archive -Path 'dist\win-unpacked\*' -DestinationPath $zip -CompressionLevel Optimal -Force
 
           $sourceCommit = (git rev-parse HEAD).Trim()
-          $buildInfo = @"
-          Orca version: 1.4.242
-          Source repository: https://github.com/stablyai/orca
-          Source tag: v1.4.242
-          Source commit: $sourceCommit
-          Platform: Windows x64
-          Runner: windows-2022
-          Packaging: electron-builder portable + zipped win-unpacked
-          Code signing: disabled (unofficial build)
-          Orcad deployment template: omitted (not required for local packaging)
-          "@
+          $buildInfo = @(
+            'Orca version: 1.4.242'
+            'Source repository: https://github.com/stablyai/orca'
+            'Source tag: v1.4.242'
+            "Source commit: $sourceCommit"
+            'Platform: Windows x64'
+            'Runner: windows-2022'
+            'Packaging: electron-builder win-unpacked folder ZIP'
+            'Code signing: disabled (unofficial build)'
+            'Remote-host server components: included and verified'
+            'Orcad template source: official v1.4.242 Windows release payload'
+            'Official setup SHA256: 9d3e8639caacb61c3af2510a39069016e1a744d7425a146186a050e5978224ef'
+            "Orcad target slots: $($targets.Name -join ', ')"
+          )
           Set-Content -LiteralPath 'dist\BUILD-INFO.txt' -Value $buildInfo -Encoding UTF8
 
-          Get-Item -LiteralPath $portableOutput, $unpackedZip, $unpackedExe |
+          Get-Item -LiteralPath $zip, $unpackedExe |
             Select-Object FullName, Length
-          Get-FileHash -Algorithm SHA256 -LiteralPath $portableOutput, $unpackedZip |
+          Get-FileHash -Algorithm SHA256 -LiteralPath $zip |
             Format-Table -AutoSize
 
-      - name: Upload portable artifacts
+      - name: Upload full unpacked-folder artifact
         uses: actions/upload-artifact@v7
         with:
-          name: orca-1.4.242-windows-x64-portable
+          name: orca-1.4.242-windows-x64-unpacked-full
           path: |
-            dist/orca-1.4.242-windows-portable.exe
-            dist/orca-1.4.242-windows-unpacked.zip
+            dist/orca-1.4.242-windows-x64-unpacked-full.zip
             dist/BUILD-INFO.txt
           if-no-files-found: error
           retention-days: 7
