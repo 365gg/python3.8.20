@@ -147,6 +147,11 @@ jobs:
             throw "ensure-native-runtime failed with exit code $LASTEXITCODE"
           }
 
+          node -e "const r=require('./config/scripts/compact-packaged-orcad-ripgrep.cjs'); r.resealSignedPackagedRipgrep('out',['ripgrep/win32-x64/rg.exe','ripgrep/win32-arm64/rg.exe']); require('./config/scripts/verify-packaged-orcad-template.cjs').verifyPackagedOrcadTemplate('out')"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to reseal and verify Orcad template against this unsigned build."
+          }
+
           pnpm exec electron-builder --config config/electron-builder.config.cjs --win --x64 --dir --publish never
           if ($LASTEXITCODE -ne 0) {
             throw "electron-builder failed with exit code $LASTEXITCODE"
