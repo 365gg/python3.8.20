@@ -74,7 +74,7 @@ jobs:
           }
 
           New-Item -ItemType Directory -Path 'out\orcad-template' -Force | Out-Null
-          Copy-Item -LiteralPath (Join-Path $template.FullName '*') -Destination 'out\orcad-template' -Recurse -Force
+          Copy-Item -Path (Join-Path $template.FullName '*') -Destination 'out\orcad-template' -Recurse -Force
 
           $targets = Get-ChildItem -LiteralPath 'out\orcad-template\targets' -Directory
           if ($targets.Count -lt 6) {
