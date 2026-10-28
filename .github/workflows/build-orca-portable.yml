@@ -119,16 +119,16 @@ jobs:
 
           $sourceCommit = (git rev-parse HEAD).Trim()
           $buildInfo = @"
-Orca version: 1.4.242
-Source repository: https://github.com/stablyai/orca
-Source tag: v1.4.242
-Source commit: $sourceCommit
-Platform: Windows x64
-Runner: windows-2022
-Packaging: electron-builder portable + zipped win-unpacked
-Code signing: disabled (unofficial build)
-Orcad deployment template: omitted (not required for local packaging)
-"@
+          Orca version: 1.4.242
+          Source repository: https://github.com/stablyai/orca
+          Source tag: v1.4.242
+          Source commit: $sourceCommit
+          Platform: Windows x64
+          Runner: windows-2022
+          Packaging: electron-builder portable + zipped win-unpacked
+          Code signing: disabled (unofficial build)
+          Orcad deployment template: omitted (not required for local packaging)
+          "@
           Set-Content -LiteralPath 'dist\BUILD-INFO.txt' -Value $buildInfo -Encoding UTF8
 
           Get-Item -LiteralPath $portableOutput, $unpackedZip, $unpackedExe |
