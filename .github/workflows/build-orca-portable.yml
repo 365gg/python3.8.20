@@ -1,0 +1,149 @@
+name: Build Orca v1.4.242 portable Windows x64
+
+on:
+  push:
+    branches:
+      - build-orca-portable-v1.4.242
+    paths:
+      - .github/workflows/build-orca-portable.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ORCA_BACKGROUND_LAUNCH: '1'
+  NODE_OPTIONS: --max-old-space-size=4096
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Orca v1.4.242
+        uses: actions/checkout@v6
+        with:
+          repository: stablyai/orca
+          ref: v1.4.242
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+          check-latest: true
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            mobile/pnpm-lock.yaml
+
+      - name: Cache Electron Builder downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-builder-orca-1.4.242-win-x64-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-builder-orca-1.4.242-win-x64-
+            electron-builder-orca-
+
+      - name: Ensure Rust toolchain
+        shell: pwsh
+        run: |
+          if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+            rustup toolchain install stable --profile minimal
+            rustup default stable
+          }
+          cargo --version
+
+      - name: Install dependencies
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: pnpm install --frozen-lockfile
+
+      - name: Install mobile dependencies
+        uses: ./.github/actions/install-mobile-dependencies
+
+      - name: Build Orca
+        shell: pwsh
+        run: |
+          pnpm run build:release
+          if ($LASTEXITCODE -ne 0) {
+            throw "pnpm build:release failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Package portable Windows x64
+        shell: pwsh
+        run: |
+          node config/scripts/ensure-native-runtime.mjs --runtime=electron
+          if ($LASTEXITCODE -ne 0) {
+            throw "ensure-native-runtime failed with exit code $LASTEXITCODE"
+          }
+
+          pnpm exec electron-builder --config config/electron-builder.config.cjs --win portable --x64 --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder failed with exit code $LASTEXITCODE"
+          }
+
+          $portable = Get-ChildItem -Path dist -File -Filter *.exe |
+            Where-Object { $_.Name -notmatch '(?i)setup' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $portable) {
+            throw "Portable executable was not produced."
+          }
+
+          $portableOutput = Join-Path $PWD 'dist\orca-1.4.242-windows-portable.exe'
+          if ($portable.FullName -ne $portableOutput) {
+            Copy-Item -LiteralPath $portable.FullName -Destination $portableOutput -Force
+          }
+
+          $unpackedExe = Join-Path $PWD 'dist\win-unpacked\Orca.exe'
+          if (-not (Test-Path -LiteralPath $unpackedExe -PathType Leaf)) {
+            throw "dist\win-unpacked\Orca.exe was not produced."
+          }
+
+          $unpackedZip = Join-Path $PWD 'dist\orca-1.4.242-windows-unpacked.zip'
+          Compress-Archive -Path 'dist\win-unpacked\*' -DestinationPath $unpackedZip -CompressionLevel Optimal -Force
+
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          $buildInfo = @"
+Orca version: 1.4.242
+Source repository: https://github.com/stablyai/orca
+Source tag: v1.4.242
+Source commit: $sourceCommit
+Platform: Windows x64
+Runner: windows-2022
+Packaging: electron-builder portable + zipped win-unpacked
+Code signing: disabled (unofficial build)
+Orcad deployment template: omitted (not required for local packaging)
+"@
+          Set-Content -LiteralPath 'dist\BUILD-INFO.txt' -Value $buildInfo -Encoding UTF8
+
+          Get-Item -LiteralPath $portableOutput, $unpackedZip, $unpackedExe |
+            Select-Object FullName, Length
+          Get-FileHash -Algorithm SHA256 -LiteralPath $portableOutput, $unpackedZip |
+            Format-Table -AutoSize
+
+      - name: Upload portable artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: orca-1.4.242-windows-x64-portable
+          path: |
+            dist/orca-1.4.242-windows-portable.exe
+            dist/orca-1.4.242-windows-unpacked.zip
+            dist/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
